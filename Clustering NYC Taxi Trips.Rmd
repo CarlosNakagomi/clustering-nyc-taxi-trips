@@ -1,0 +1,936 @@
+---
+title: "Project"
+output:
+  html_document: default
+  pdf_document: default
+date: "2025-03-26"
+---
+
+#LOADING DATASET
+```{r}
+# Load necessary library
+library(readr)
+yellow_2015_01 <- read_csv("C:/Users/carlo/Documents/archive/yellow_tripdata_2015-01.csv")
+yellow_2016_01 <- read_csv("C:/Users/carlo/Documents/archive/yellow_tripdata_2016-01.csv")
+yellow_2016_02 <- read_csv("C:/Users/carlo/Documents/archive/yellow_tripdata_2016-02.csv")
+yellow_2016_03 <- read_csv("C:/Users/carlo/Documents/archive/yellow_tripdata_2016-03.csv")
+
+# Preview each data frame
+head(yellow_2015_01)
+head(yellow_2016_01)
+head(yellow_2016_02)
+head(yellow_2016_03)
+```
+
+
+
+
+#DATA EXPLORATION - NAME CHECK
+```{r}
+# Store only the 2016 datasets for comparison
+column_names <- list(
+  "2016-01" = names(yellow_2016_01),
+  "2016-02" = names(yellow_2016_02),
+  "2016-03" = names(yellow_2016_03)
+)
+
+# Get all unique columns from 2016 datasets
+all_unique_columns <- unique(unlist(column_names))
+
+# Build a matrix showing presence of each column in each dataset
+presence_matrix <- sapply(all_unique_columns, function(col) {
+  sapply(column_names, function(cols) col %in% cols)
+})
+
+# Transpose for readability
+presence_matrix <- t(presence_matrix)
+
+# Identify mismatched columns
+mismatched_cols <- rownames(presence_matrix)[rowSums(presence_matrix) != length(column_names)]
+
+# Final message
+if (length(mismatched_cols) == 0) {
+  cat("✅ All 2016 datasets have identical column names.\n")
+} else {
+  cat("❌ Some columns differ between the 2016 datasets:\n\n")
+  for (col in mismatched_cols) {
+    cat(paste0("⚠️  The column '", col, "' has a difference between the 2016 datasets.\n"))
+  }
+}
+```
+
+
+
+
+#MERGING DATASETS
+```{r}
+# Load required library
+library(dplyr)
+library(readr)
+
+# Combine all into a single dataset
+yellow_combined <- bind_rows(yellow_2016_01, yellow_2016_02, yellow_2016_03)
+```
+
+
+
+
+#PERFORMING STRATIFIED SAMPLING
+```{r}
+# Load required libraries
+library(dplyr)
+library(rsample)
+
+# Perform stratified sampling (e.g., 20% sample, stratified by payment_type)
+set.seed(123)  # For reproducibility
+strat_split <- initial_split(yellow_combined, prop = 0.1, strata = payment_type)
+
+# Extract the stratified sample
+yellow_sample_stratified <- training(strat_split)
+
+# View summary
+cat("✅ Stratified sample created (20% of the data, stratified by payment_type).\n")
+table(yellow_sample_stratified $payment_type)
+```
+
+
+
+
+#CHEKING FOR THE EXISTENCE OF MISSING VALUES
+```{r}
+# Summary of missing values per column
+missing_summary <- sapply(yellow_sample_stratified, function(x) sum(is.na(x)))
+
+# Show only columns with missing values
+missing_summary[missing_summary > 0]
+```
+
+
+
+
+#CHECKING FOR THE EXISTENCE OF DUPLICATED ROWS
+```{r}
+# Check how many duplicated rows exist in the combined dataset
+sum(duplicated(yellow_sample_stratified))
+```
+
+
+
+
+#CHECKING FOR EXISTENCE OF OUTLIERS
+```{r}
+# Select numeric columns only
+numeric_cols <- sapply(yellow_sample_stratified, is.numeric)
+numeric_data <- yellow_sample_stratified [, numeric_cols]
+
+# Function to detect outliers using IQR
+detect_outliers <- function(x) {
+  Q1 <- quantile(x, 0.25, na.rm = TRUE)
+  Q3 <- quantile(x, 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  outliers <- (x < (Q1 - 1.5 * IQR)) | (x > (Q3 + 1.5 * IQR))
+  return(sum(outliers, na.rm = TRUE))
+}
+
+# Apply to all numeric columns
+outlier_counts <- sapply(numeric_data, detect_outliers)
+outlier_counts[outlier_counts > 0]
+```
+
+
+
+
+#CHECKING MIN-MAX OF EACH VARIABLE
+```{r}
+# Compute min and max for each variable in the dataset
+summary_stats <- data.frame(
+  Variable = names(yellow_sample_stratified),
+  Min = sapply(yellow_sample_stratified, function(x) if(is.numeric(x)) min(x, na.rm = TRUE) else NA),
+  Max = sapply(yellow_sample_stratified, function(x) if(is.numeric(x)) max(x, na.rm = TRUE) else NA)
+)
+
+# Print the result
+print(summary_stats)
+```
+
+
+
+
+#HANDLING OUTLIERS - REAL SCENARIO BASED ON MIN-MAX
+```{r}
+library(dplyr)
+
+yellow_sample_clean <- yellow_sample_stratified %>%
+  # 1. Filter valid passenger_count (1–3 only)
+  filter(passenger_count > 0, passenger_count <= 3) %>%
+  
+  # 2. Filter for reasonable trip_distance (0 < x ≤ 35)
+  filter(trip_distance > 0, trip_distance <= 35) %>%
+  
+  # 3. Filter valid pickup coordinates
+  filter(
+    between(pickup_longitude, -74.26, -73.70),
+    between(pickup_latitude, 40.49, 40.92)
+  ) %>%
+  
+  # 4. Filter valid dropoff coordinates
+  filter(
+    between(dropoff_longitude, -74.26, -73.70),
+    between(dropoff_latitude, 40.49, 40.92)
+  ) %>%
+  
+  # 5. Filter valid fare_amount (0 < x ≤ 250)
+  filter(fare_amount > 0, fare_amount <= 250) %>%
+  
+  # 6. Filter valid extra (0 ≤ x ≤ 50)
+  filter(extra >= 0, extra <= 50) %>%
+  
+  # 7. Filter valid mta_tax (0 < x ≤ 0.5)
+  filter(mta_tax > 0, mta_tax <= 0.5) %>%
+  
+  # 8. Filter valid tip_amount (0 < x ≤ 50)
+  filter(tip_amount > 0, tip_amount <= 50) %>%
+  
+  # 9. Filter valid tolls_amount (0 < x ≤ 50)
+  filter(tolls_amount > 0, tolls_amount <= 50) %>%
+  
+  # 10. Filter valid improvement_surcharge (0 ≤ x ≤ 0.3)
+  filter(improvement_surcharge >= 0, improvement_surcharge <= 0.3) %>%
+  
+  # 11. Filter valid total_amount (0 < x ≤ 300)
+  filter(total_amount > 0, total_amount <= 300)
+```
+
+
+
+
+#DROPPING "IRRELEVANT" COLUMNS 
+```{r}
+library(dplyr)
+
+yellow_sample <- yellow_sample_clean %>%
+  select(
+    -VendorID,
+    -tpep_pickup_datetime,
+    -tpep_dropoff_datetime,
+    -pickup_longitude,
+    -pickup_latitude,
+    -RatecodeID,
+    -store_and_fwd_flag,
+    -dropoff_longitude,
+    -dropoff_latitude
+  )
+```
+
+
+
+
+#EXPORT CLEANED DATASET
+```{r}
+# Export the yellow_sample dataframe to a CSV file
+write.csv(yellow_sample, "yellow_sample_export.csv", row.names = FALSE)
+```
+
+
+
+
+#SCALING
+```{r}
+# Select only numeric columns for scaling
+numeric_columns <- sapply(yellow_sample, is.numeric)
+
+# Subset the dataset to include only numeric columns
+yellow_sample_numeric <- yellow_sample[, numeric_columns]
+
+# Subset the dataset to include only categorical columns
+categorical_columns <- yellow_sample[, !numeric_columns]
+
+# Apply scaling to numeric columns
+yellow_sample_scaled <- scale(yellow_sample_numeric)
+
+# Convert the scaled data into a data frame
+yellow_sample_scaled <- as.data.frame(yellow_sample_scaled)
+
+# Combine the scaled numeric columns with the categorical columns
+yellow_sample_final <- cbind(yellow_sample_scaled, categorical_columns)
+
+# Optional: View the first few rows of the final dataset
+head(yellow_sample_final)
+```
+
+
+
+
+#PCA
+```{r}
+# Load the factoextra package
+library(factoextra)
+
+# Drop the mta_tax column since it's all NA
+yellow_sample_scaled <- yellow_sample_scaled[, !names(yellow_sample_scaled) %in% "mta_tax"]
+
+# Run PCA
+pca_result <- prcomp(yellow_sample_scaled, center = TRUE, scale. = TRUE)
+
+# Individuals plot
+fviz_pca_ind(pca_result, 
+             title = "PCA - New York City Taxi & Limousine Commission",  
+             palette = "jco",
+             geom = "point", 
+             ggtheme = theme_classic(),
+             legend = "none")
+
+# Scree plot
+fviz_eig(pca_result, 
+         addlabels = TRUE,
+         barfill = "blue", 
+         barcolor = "black",
+         main = "Scree Plot - PCA")
+```
+
+
+
+#HOPKINS STATISTICS
+```{r}
+# Load necessary libraries
+library(factoextra)
+library(dplyr)
+
+# Set seed
+set.seed(123)
+
+# Remove mta_tax (only column with NAs)
+yellow_sample_numeric <- yellow_sample_final %>%
+  select(where(is.numeric)) %>%
+  select(-mta_tax)
+
+# Sample 0.1% of the numeric data
+sampled_data_numeric <- yellow_sample_numeric %>%
+  slice_sample(prop = 0.001)
+
+# Compute Hopkins statistic
+res <- get_clust_tendency(sampled_data_numeric,
+                          n = nrow(sampled_data_numeric) - 1,
+                          graph = FALSE)
+
+# Show result
+cat("Hopkins statistic:", round(res$hopkins_stat, 4), "\n")
+```
+
+
+
+
+#DISTANCE MATRIX
+```{r}
+library(factoextra)
+library(dplyr)
+library(ggplot2)
+
+# Sample 1000 observations
+set.seed(123)
+sampled_numeric <- yellow_sample_final %>% sample_n(1000)
+
+# Distance matrix
+distance_matrix <- dist(sampled_numeric)
+distance_matrix_mat <- as.matrix(distance_matrix)
+
+# Visualize without axis labels or ticks
+fviz_dist(as.dist(distance_matrix_mat),
+          show_labels = FALSE,
+          gradient = list(low = "white", mid = "lightblue", high = "red")) +
+  labs(title = "Distance Matrix (Sampled 1000 Observations)") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank()
+  )
+```
+
+
+
+
+#ELBOW METHOD
+```{r}
+library(dplyr)
+library(factoextra)
+
+# Remove mta_tax column and sample 5000 observations
+yellow_sample_numeric <- yellow_sample_final %>%
+  select(where(is.numeric)) %>%
+  select(-mta_tax) %>%
+  slice_sample(n = 5000)
+
+# Set seed
+set.seed(123)
+
+# Run Elbow Method for optimal K
+fviz_nbclust(yellow_sample_numeric, 
+             kmeans, 
+             method = "wss", 
+             k.max = 10,
+             nstart = 25,
+             verbose = FALSE) +
+  labs(title = "Elbow Method for Optimal Number of Clusters",
+       x = "Number of Clusters (k)", 
+       y = "Total Within-Cluster Sum of Squares")
+```
+
+
+
+
+#AVERAGE SILHOUETTE METHOD
+```{r}
+# Load required libraries
+library(tidyr)
+library(dplyr)
+library(factoextra)
+
+# Prepare clean numeric data (remove mta_tax and any rows with NA/NaN)
+yellow_sample_numeric <- yellow_sample_final %>%
+  select(where(is.numeric)) %>%
+  select(-mta_tax) %>%         # Drop the column with NAs
+  drop_na() %>%                # Drop any remaining rows with NA/NaN
+  slice_sample(n = 5000)       # Sample after cleaning
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Silhouette Method to find optimal number of clusters
+fviz_nbclust(yellow_sample_numeric, 
+             kmeans, 
+             method = "silhouette") +
+  labs(title = "Silhouette Method for Optimal Number of Clusters",
+       x = "Number of Clusters (k)",
+       y = "Average Silhouette Width")
+```
+
+
+
+
+#SILHOUETTE COEFFICIENT FOR HIERARCHICAL CLUSTERING
+```{r}
+# Load additional package for silhouette
+library(cluster)
+
+# Use a smaller sample for hierarchical clustering
+yellow_sample_numeric <- yellow_sample_final %>%
+  select(where(is.numeric)) %>%
+  slice_sample(n = 500)
+
+# Run hierarchical clustering
+set.seed(123)
+hc.res1 <- eclust(yellow_sample_numeric, 
+                  "hclust", 
+                  k = 4, 
+                  hc_metric = "euclidean", 
+                  hc_method = "ward.D2", 
+                  graph = FALSE)
+
+# Compute distance matrix
+dist_matrix <- dist(yellow_sample_numeric, method = "euclidean")
+
+# Calculate silhouette values for hierarchical clustering
+sil <- silhouette(hc.res1$cluster, dist_matrix)
+
+# View average silhouette width
+mean(sil[, 3])
+```
+
+
+
+
+#DAVIES-BOULDIN INDEX
+```{r}
+# Load required libraries
+library(dplyr)
+library(cluster)       # pam, clara
+library(clusterCrit)   # intCriteria()
+
+# Clean numeric data and sample
+yellow_sample_numeric <- yellow_sample_final %>%
+  select(where(is.numeric)) %>%
+  select(-mta_tax) %>%       # Remove NA-prone column
+  na.omit() %>%              # Drop rows with NAs
+  slice_sample(n = 5000)
+
+# ---- K-MEANS ----
+set.seed(123)
+km.res1 <- kmeans(yellow_sample_numeric, centers = 4, nstart = 25)
+
+db_index_kmeans <- intCriteria(as.matrix(yellow_sample_numeric),
+                               as.integer(km.res1$cluster),
+                               c("Davies_Bouldin"))
+
+# ---- K-MEDOIDS (PAM) ----
+set.seed(123)
+pam.res1 <- pam(yellow_sample_numeric, k = 4)
+
+db_index_pam <- intCriteria(as.matrix(yellow_sample_numeric),
+                            as.integer(pam.res1$clustering),
+                            c("Davies_Bouldin"))
+
+# ---- CLARA ----
+set.seed(123)
+clara.res <- clara(yellow_sample_numeric, k = 4)
+
+db_index_clara <- intCriteria(as.matrix(yellow_sample_numeric),
+                              as.integer(clara.res$clustering),
+                              c("Davies_Bouldin"))
+
+# ---- COMPARISON ----
+cat("Davies-Bouldin Index Comparison:\n")
+cat("K-Means:   ", round(db_index_kmeans$davies_bouldin, 4), "\n")
+cat("K-Medoids: ", round(db_index_pam$davies_bouldin, 4), "\n")
+cat("CLARA:     ", round(db_index_clara$davies_bouldin, 4), "\n")
+```
+
+
+
+
+#CALINSKI-HARABASZ INDEX
+```{r}
+# Load required libraries
+library(dplyr)
+library(cluster)       # pam, clara
+library(clusterCrit)   # intCriteria()
+
+# Clean and sample numeric data
+yellow_sample_numeric <- yellow_sample_final %>%
+  select(where(is.numeric)) %>%
+  select(-mta_tax) %>%
+  na.omit() %>%
+  slice_sample(n = 5000)
+
+# ---- K-MEANS ----
+set.seed(123)
+km.res1 <- kmeans(yellow_sample_numeric, centers = 4, nstart = 25)
+
+ch_index_kmeans <- intCriteria(as.matrix(yellow_sample_numeric),
+                               as.integer(km.res1$cluster),
+                               c("Calinski_Harabasz"))
+
+# ---- K-MEDOIDS (PAM) ----
+set.seed(123)
+pam.res1 <- pam(yellow_sample_numeric, k = 4)
+
+ch_index_pam <- intCriteria(as.matrix(yellow_sample_numeric),
+                            as.integer(pam.res1$clustering),
+                            c("Calinski_Harabasz"))
+
+# ---- CLARA ----
+set.seed(123)
+clara.res <- clara(yellow_sample_numeric, k = 4)
+
+ch_index_clara <- intCriteria(as.matrix(yellow_sample_numeric),
+                              as.integer(clara.res$clustering),
+                              c("Calinski_Harabasz"))
+
+# ---- COMPARISON ----
+cat("Calinski-Harabasz Index Comparison:\n")
+cat("K-Means:   ", round(ch_index_kmeans$calinski_harabasz, 2), "\n")
+cat("K-Medoids: ", round(ch_index_pam$calinski_harabasz, 2), "\n")
+cat("CLARA:     ", round(ch_index_clara$calinski_harabasz, 2), "\n")
+```
+
+
+
+
+#DUNN INDEX
+```{r}
+# Load required libraries
+library(dplyr)
+library(cluster)       # pam, clara
+library(clusterCrit)   # intCriteria()
+
+# Prepare clean numeric data
+yellow_sample_numeric <- yellow_sample_final %>%
+  select(where(is.numeric)) %>%
+  select(-mta_tax) %>%  # Remove column with NA values
+  na.omit() %>%         # Remove any other potential NA rows
+  slice_sample(n = 5000)
+
+# ---- K-MEANS ----
+set.seed(123)
+km.res1 <- kmeans(yellow_sample_numeric, centers = 4, nstart = 25)
+
+dunn_index_kmeans <- intCriteria(as.matrix(yellow_sample_numeric),
+                                 as.integer(km.res1$cluster),
+                                 c("Dunn"))
+
+# ---- K-MEDOIDS (PAM) ----
+set.seed(123)
+pam.res1 <- pam(yellow_sample_numeric, k = 4)
+
+dunn_index_pam <- intCriteria(as.matrix(yellow_sample_numeric),
+                              as.integer(pam.res1$clustering),
+                              c("Dunn"))
+
+# ---- CLARA ----
+set.seed(123)
+clara.res <- clara(yellow_sample_numeric, k = 4)
+
+dunn_index_clara <- intCriteria(as.matrix(yellow_sample_numeric),
+                                as.integer(clara.res$clustering),
+                                c("Dunn"))
+
+clara_dunn_score <- round(dunn_index_clara$dunn, 4)
+
+# ---- COMPARISON ----
+cat("Dunn Index Comparison:\n")
+cat("K-Means:   ", round(dunn_index_kmeans$dunn, 4), "\n")
+cat("K-Medoids: ", round(dunn_index_pam$dunn, 4), "\n")
+cat("CLARA:     ", clara_dunn_score, "\n")
+```
+
+
+
+
+#RAND INDEX
+```{r}
+# Load required libraries
+library(dplyr)
+library(cluster)
+library(clusterCrit)
+library(mclust)
+
+# --- SAMPLE CONSISTENT CLEAN DATASET ---
+set.seed(123)
+yellow_sample_numeric <- yellow_sample_final %>%
+  select(where(is.numeric)) %>%
+  select(-mta_tax) %>%
+  na.omit() %>%
+  slice_sample(n = 5000)
+
+# --- K-MEANS CLUSTERING ---
+km.res1 <- kmeans(yellow_sample_numeric, centers = 4, nstart = 25)
+
+# --- PAM (K-MEDOIDS) CLUSTERING ---
+pam.res1 <- pam(yellow_sample_numeric, k = 4)
+
+# --- CLARA CLUSTERING ---
+clara.res <- clara(yellow_sample_numeric, k = 4)
+
+# --- ADJUSTED RAND INDEX CALCULATION ---
+ari_kmeans_pam <- adjustedRandIndex(km.res1$cluster, pam.res1$clustering)
+ari_kmeans_clara <- adjustedRandIndex(km.res1$cluster, clara.res$clustering)
+ari_pam_clara <- adjustedRandIndex(pam.res1$clustering, clara.res$clustering)
+
+# --- DISPLAY RESULTS ---
+cat("✅ Adjusted Rand Index Comparison:\n")
+cat("K-Means vs PAM:   ", round(ari_kmeans_pam, 4), "\n")
+cat("K-Means vs CLARA: ", round(ari_kmeans_clara, 4), "\n")
+cat("PAM vs CLARA:     ", round(ari_pam_clara, 4), "\n")
+```
+
+
+
+
+#MEILAS VARIATION INDEX VI
+```{r}
+# Load necessary package
+library(mcclust)
+
+# Ensure all clustering algorithms used the same data:
+# km.res1$cluster
+# pam.res1$clustering
+# clara.res$clustering
+
+# Compute Meila's Variation of Information (VI) for pairwise comparisons
+vi_kmeans_pam <- vi.dist(km.res1$cluster, pam.res1$clustering)
+vi_kmeans_clara <- vi.dist(km.res1$cluster, clara.res$clustering)
+vi_pam_clara <- vi.dist(pam.res1$clustering, clara.res$clustering)
+
+# Output the results
+cat("📊 Meila's Variation of Information (VI):\n")
+cat("K-Means vs PAM:   ", round(vi_kmeans_pam, 4), "\n")
+cat("K-Means vs CLARA: ", round(vi_kmeans_clara, 4), "\n")
+cat("PAM vs CLARA:     ", round(vi_pam_clara, 4), "\n")
+
+```
+
+
+
+
+#LAST COMPARISSON
+```{r}
+library(dplyr)
+library(clValid)
+
+# Sample and clean data BEFORE running clValid
+set.seed(123)
+yellow_sample_numeric <- yellow_sample_final %>%
+  select(where(is.numeric)) %>%
+  select(-mta_tax) %>%  # Drop the NA-prone column
+  na.omit() %>%
+  slice_sample(n = 600)
+
+# Perform internal cluster validation
+clvalid_results <- clValid(
+  obj = yellow_sample_numeric,
+  nClust = 2:6,
+  clMethods = c("kmeans", "pam", "clara"),
+  validation = "stability",
+  maxitems = 600,
+  metric = "euclidean"
+)
+
+# Summary of results
+summary(clvalid_results)
+```
+
+
+
+
+#K-MEANS (PICK LOCATION)
+```{r}
+# Load libraries
+library(factoextra)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+
+# Step 1: Sample and keep relevant columns (numeric + pickup info)
+set.seed(123)
+df <- yellow_sample_clean %>%
+  slice_sample(n = 5000) %>%
+  select(where(is.numeric),
+         tpep_pickup_datetime,
+         pickup_longitude,
+         pickup_latitude)
+
+# Step 2: Remove coordinates from clustering (used only for plotting)
+clustering_data <- df %>%
+  select(where(is.numeric)) %>%
+  select(-pickup_longitude, -pickup_latitude)
+
+# Step 3: Run K-Means
+km.res1 <- eclust(clustering_data, "kmeans", k = 4, graph = FALSE)
+
+# Step 4: Apply custom cluster labels
+cluster_labels <- c("Standard Trips", "Premium Trips", "Corporate/Low Tip", "Group Rides")
+df$cluster <- factor(km.res1$cluster, levels = 1:4, labels = cluster_labels)
+
+# Step 5: Temporal Variation Plot — Clusters by Hour of Day
+df$hour <- hour(df$tpep_pickup_datetime)
+
+ggplot(df, aes(x = hour, fill = cluster)) +
+  geom_histogram(binwidth = 1, color = "black", position = "dodge") +
+  labs(title = "Temporal Distribution of Trips by Cluster",
+       x = "Hour of Day (Pickup Time)",
+       y = "Trip Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2", name = "Cluster")
+
+# Step 6: Spatial Plot — Pickup Location by Cluster (Hotspots)
+ggplot(df, aes(x = pickup_longitude, y = pickup_latitude, color = cluster)) +
+  geom_point(alpha = 0.6, size = 1.5) +
+  labs(title = "Pickup Locations by Cluster",
+       x = "Longitude",
+       y = "Latitude") +
+  theme_minimal() +
+  coord_fixed() +
+  scale_color_brewer(palette = "Set2", name = "Cluster")
+
+# Step 7: Summary of cluster profiles
+cluster_summary <- df %>%
+  group_by(cluster) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+print(cluster_summary)
+```
+
+
+
+
+#K-MEANS (PICK LOCATION - ZOOM)
+```{r}
+# Load libraries
+library(factoextra)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+
+# Step 1: Sample and keep relevant columns
+set.seed(123)
+df <- yellow_sample_clean %>%
+  slice_sample(n = 5000) %>%
+  select(where(is.numeric),
+         tpep_pickup_datetime,
+         pickup_longitude,
+         pickup_latitude)
+
+# Step 2: Remove coordinates from clustering
+clustering_data <- df %>%
+  select(where(is.numeric)) %>%
+  select(-pickup_longitude, -pickup_latitude)
+
+# Step 3: Run K-Means
+km.res1 <- eclust(clustering_data, "kmeans", k = 4, graph = FALSE)
+
+# Step 4: Apply cluster labels
+cluster_labels <- c("Standard Trips", "Premium Trips", "Corporate/Low Tip", "Group Rides")
+df$cluster <- factor(km.res1$cluster, levels = 1:4, labels = cluster_labels)
+
+# Step 5: Temporal Distribution of Clusters
+df$hour <- hour(df$tpep_pickup_datetime)
+
+ggplot(df, aes(x = hour, fill = cluster)) +
+  geom_histogram(binwidth = 1, color = "black", position = "dodge") +
+  labs(title = "Temporal Distribution of Trips by Cluster",
+       x = "Hour of Day (Pickup Time)",
+       y = "Trip Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2", name = "Cluster")
+
+# Step 6: Spatial Plot with NYC Zoom and Centroids
+# Prepare centroid coordinates for plotting
+centroids <- df %>%
+  group_by(cluster) %>%
+  summarise(
+    pickup_longitude = mean(pickup_longitude),
+    pickup_latitude = mean(pickup_latitude)
+  )
+
+ggplot(df, aes(x = pickup_longitude, y = pickup_latitude, color = cluster)) +
+  geom_point(alpha = 0.6, size = 1.5) +
+  geom_point(data = centroids, aes(x = pickup_longitude, y = pickup_latitude),
+             shape = 4, size = 4, color = "black", stroke = 1.5) +
+  labs(title = "Pickup Locations by Cluster",
+       x = "Longitude",
+       y = "Latitude") +
+  theme_minimal() +
+  coord_fixed(xlim = c(-74.05, -73.75), ylim = c(40.6, 40.9)) +
+  scale_color_brewer(palette = "Set2", name = "Cluster")
+
+# Step 7a: Cluster Summary (means of numeric features)
+cluster_summary <- df %>%
+  group_by(cluster) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+print(cluster_summary)
+
+# Step 7b: Cluster Size Summary
+df %>%
+  count(cluster) %>%
+  arrange(desc(n)) %>%
+  rename(Cluster = cluster, Count = n)
+```
+
+
+
+
+#K-MEANS CENTROID GRAPH + RADIUS CIRCLE
+```{r}
+library(ggplot2)
+library(ggforce)
+library(dplyr)
+
+# 4-mile radius ≈ 0.058 degrees
+radius_deg <- 4 / 69
+
+# Circle data
+circle_data <- centroids %>%
+  rename(x0 = pickup_longitude, y0 = pickup_latitude) %>%
+  mutate(r = radius_deg)
+
+# Landmark data
+landmarks <- data.frame(
+  name = c("JFK Airport", "Resorts World Casino", "Long Island City", "Astoria",
+           "Roosevelt Island", "Central Park", "The Met", "Grand Central",
+           "Harlem", "Columbia Univ.", "Mount Sinai Hosp."),
+  latitude = c(40.6413, 40.6721, 40.7440, 40.7644, 40.7616, 40.7678, 40.7794, 40.7527,
+               40.8075, 40.8075, 40.7890),
+  longitude = c(-73.7781, -73.8357, -73.9489, -73.9235, -73.9496, -73.9718, -73.9632,
+                -73.9772, -73.9450, -73.9626, -73.9522)
+)
+
+# Add ID numbers
+landmarks$id <- seq_len(nrow(landmarks))
+
+# Final Plot (clean)
+ggplot() +
+  geom_circle(data = circle_data, 
+              aes(x0 = x0, y0 = y0, r = r, color = cluster), 
+              alpha = 0.2, inherit.aes = FALSE) +
+
+  geom_point(data = centroids, 
+             aes(x = pickup_longitude, y = pickup_latitude, color = cluster), 
+             size = 5, shape = 17) +
+
+  geom_point(data = landmarks, 
+             aes(x = longitude, y = latitude), 
+             color = "black", shape = 19, size = 2) +
+
+  geom_text(data = landmarks, 
+            aes(x = longitude, y = latitude, label = id),
+            size = 3.2, fontface = "bold", hjust = -0.4, vjust = -0.3, color = "black") +
+
+  labs(
+    title = "Cluster Centroids with 4-Mile Radius Circles and NYC Landmarks",
+    x = "Longitude", y = "Latitude"
+  ) +
+  coord_fixed() +
+  xlim(-74.02, -73.75) +
+  ylim(40.63, 40.82) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set2", name = "Cluster")
+```
+
+
+
+
+#K-MEANS (FARE_AMOUNT)
+```{r}
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+library(factoextra)
+
+# Step 1: Sample and select fare_amount
+set.seed(123)
+fare_data <- yellow_sample_clean %>%
+  slice_sample(n = 5000) %>%
+  select(fare_amount)
+
+# Step 2: Apply K-Means clustering on fare_amount
+kmeans_fare <- kmeans(fare_data, centers = 4, nstart = 25)
+fare_data$cluster <- kmeans_fare$cluster
+
+# Step 3: Recode cluster labels for interpretability
+fare_cluster_counts <- fare_data %>%
+  count(cluster) %>%
+  mutate(
+    cluster = factor(cluster),
+    label = case_when(
+      cluster == 1 ~ "Mid Fare",
+      cluster == 2 ~ "Low Fare",
+      cluster == 3 ~ "High Fare",
+      cluster == 4 ~ "Very High Fare"
+    )
+  )
+
+# Step 4: Define y-axis limit
+y_max <- max(fare_cluster_counts$n) * 1.1
+
+# Step 5: Create bar chart with subtitle
+ggplot(fare_cluster_counts, aes(x = label, y = n, fill = cluster)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = n), vjust = -0.3, size = 5, fontface = "bold") +
+  labs(
+    title = "Trip Volume per Fare-Based Cluster",
+    subtitle = "Clusters based on K-Means using fare_amount from 5,000 NYC Taxi trips",
+    x = NULL,
+    y = "Number of Trips"
+  ) +
+  theme_minimal(base_size = 14) +
+  scale_fill_brewer(palette = "Set2") +
+  ylim(0, y_max) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    axis.text.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    axis.ticks.x = element_blank()
+  )
+```
+
