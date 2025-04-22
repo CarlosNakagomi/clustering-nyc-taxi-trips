@@ -1,4 +1,4 @@
-This commit includes the complete R Markdown (.Rmd) file for the “Clustering NYC Taxi Trips” project. The analysis applies unsupervised learning techniques—primarily K-Means—to uncover travel demand patterns and customer segmentation using the NYC Taxi & Limousine Commission 2016 dataset. 
+This commit includes the complete R Markdown (.Rmd) file for the “Clustering NYC Taxi Trips” project. The analysis applies unsupervised learning techniques, primarily K-Means, to uncover travel demand patterns and customer segmentation using the NYC Taxi & Limousine Commission 2016 dataset. 
 
 
 
